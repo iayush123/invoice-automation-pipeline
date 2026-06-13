@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: invoice
+          POSTGRES_PASSWORD: invoice
+          POSTGRES_DB: invoice_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://invoice:invoice@localhost:5432/invoice_test
+      DATABASE_URL_SYNC: postgresql+psycopg2://invoice:invoice@localhost:5432/invoice_test
+      REDIS_URL: redis://localhost:6379/0
+      LLM_PROVIDER: openai
+      LLM_MODEL: gpt-4o
+      ENVIRONMENT: test
+      SECRET_KEY: ci-test-secret
+      RISK_AMOUNT_THRESHOLD: "10000.00"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run tests (excluding LLM eval)
+        run: pytest tests/ -v --ignore=tests/evals -x
+
+      - name: Run decision accuracy eval
+        run: pytest tests/evals/test_extraction_eval.py::test_risk_decision_accuracy -v
